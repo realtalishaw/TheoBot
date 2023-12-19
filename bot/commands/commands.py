@@ -1,9 +1,11 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackQueryHandler, CallbackContext
 from utils.redis_cache import get_from_cache, set_in_cache
+from utils.helper_functions import is_user_allowed
+import re
 
 # Define states for the conversation
-WATCH_VIDEO, QUIZ = range(2)
+EMAIL, PHONE, BIO, ONBOARDING, WATCH_VIDEO, QUIZ = range(6)
 
 # Define quiz questions and answers
 quiz_questions = [
@@ -12,19 +14,20 @@ quiz_questions = [
     ("What color is the Sky?", ["Pink", "Orange", "Blue"], "Blue")
 ]
 
-# Define the callback data for the button
-REGISTRATION_CALLBACK_DATA = 'start_onboarding'
+# Define the callback data for the buttons
+BEGIN_ONBOARDING_CALLBACK_DATA = 'begin_onboarding'
 
-def start(update: Update, context: CallbackContext) -> None:
+# Email validation regex
+EMAIL_REGEX = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+
+def start(update: Update, context: CallbackContext) -> int:
     user_id = update.message.from_user.id
+    user_name = update.message.from_user.first_name  # Retrieving the user's first name
     user_data = get_from_cache(str(user_id))
     
     if user_data is None:
-        # The user is new or not confirmed. Initiate the onboarding process.
-        update.message.reply_text(
-            'Welcome to TheoBot! Click the button below to start your registration process.',
-            reply_markup=registration_button()
-        )
+        update.message.reply_text(f'Welcome {user_name}! Please enter your email:')
+        return EMAIL
     elif user_data == 'unconfirmed':
         # The user exists but isn't confirmed. Prompt them to wait or contact an admin.
         update.message.reply_text("Your registration is pending approval. You cannot access the bot at this moment.")
@@ -32,15 +35,44 @@ def start(update: Update, context: CallbackContext) -> None:
         # The user is confirmed. Proceed with the normal welcome message.
         update.message.reply_text('Welcome back to TheoBot! Type /help for a list of commands.')
 
-def registration_button() -> InlineKeyboardMarkup:
-    # Use a callback_data for the button that will trigger the start_onboarding
-    keyboard = [[InlineKeyboardButton("Register", callback_data=REGISTRATION_CALLBACK_DATA)]]
-    return InlineKeyboardMarkup(keyboard)
+def collect_email(update: Update, context: CallbackContext) -> int:
+    email = update.message.text
+    if re.fullmatch(EMAIL_REGEX, email):
+        context.user_data['email'] = email
+        update.message.reply_text('Great! Now, please send me your phone number.')
+        return PHONE
+    else:
+        update.message.reply_text('Invalid email. Please enter a valid email address:')
+        return EMAIL
+
+def collect_phone(update: Update, context: CallbackContext) -> int:
+    phone = update.message.text
+    if phone.isdigit() and 7 <= len(phone) <= 15:  # Basic validation for phone number
+        context.user_data['phone'] = phone
+        update.message.reply_text('Thanks! Lastly, tell me a bit about yourself.')
+        return BIO
+    else:
+        update.message.reply_text('Invalid phone number. Please enter a valid phone number:')
+        return PHONE
+
+def collect_bio(update: Update, context: CallbackContext) -> int:
+    bio = update.message.text
+    context.user_data['bio'] = bio
+    update.message.reply_text('Registration info collected.')
+    
+    # Add a "Begin" button to start the onboarding process
+    keyboard = [[InlineKeyboardButton("Begin", callback_data=BEGIN_ONBOARDING_CALLBACK_DATA)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text('Click "Begin" to start the onboarding process:', reply_markup=reply_markup)
+    return ONBOARDING
 
 def start_onboarding(update: Update, context: CallbackContext) -> int:
-    # Start the onboarding process by sending the first video
+    query = update.callback_query
+    query.answer()
+
     context.user_data['video_index'] = 0
     return watch_video(update, context)
+
 
 def watch_video(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
@@ -49,7 +81,7 @@ def watch_video(update: Update, context: CallbackContext) -> int:
     # Retrieve the current video index from user_data, or start with the first video
     video_index = context.user_data.get('video_index', 0)
     video_links = [
-        "https://www.youtube.com/shorts/vAalvqyPjfs",
+        "https://drive.google.com/file/d/1Gic00fJGSMGYdUxECLUkEVLy4k5Jjg3G/view?usp=sharing",
         "https://youtu.be/FkGK7bitav0?si=2-eYJBryZPEPSLGU",
         "https://youtube.com/shorts/6sUEsaaNMlc?si=3_ao53e-68tV8gNO"
     ]
@@ -100,15 +132,21 @@ def cancel(update: Update, context: CallbackContext) -> int:
     update.message.reply_text('Onboarding has been canceled.')
     return ConversationHandler.END
 
+
 # Define conversation handler for onboarding
 conv_handler = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
     states={
+        EMAIL: [MessageHandler(Filters.text & ~Filters.command, collect_email)],
+        PHONE: [MessageHandler(Filters.text & ~Filters.command, collect_phone)],
+        BIO: [MessageHandler(Filters.text & ~Filters.command, collect_bio)],
+        ONBOARDING: [CallbackQueryHandler(start_onboarding, pattern=BEGIN_ONBOARDING_CALLBACK_DATA)],
         WATCH_VIDEO: [CallbackQueryHandler(watch_video)],
-        QUIZ: [CallbackQueryHandler(quiz)],
+        QUIZ: [CallbackQueryHandler(quiz)]
     },
     fallbacks=[CommandHandler('cancel', cancel)]
 )
+
 
 
 

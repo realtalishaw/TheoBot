@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 from utils.logger import setup_logger
 from bot.conversation_handler import chat_with_openai
-from bot.commands import start, help, register, project, assignrole, createtask, assigntask, status, calendar, addevent, rsvp, settings, feedback, button, conv_handler
+from bot.commands.commands import start, help, register, project, assignrole, createtask, assigntask, status, calendar, addevent, rsvp, settings, feedback, button, conv_handler
 
 load_dotenv()
 telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
